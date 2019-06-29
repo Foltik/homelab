@@ -21,17 +21,17 @@ Note that storage IDs are specific to proxmox and should be kept unique.
 zpool create -o ashift=12 $POOL_NAME mirror $DEV_1 $DEV_2
 pvesm add zfspool $STORAGE_ID -pool $POOL_NAME
 #+END_SRC
-*** Enable NFS sharing of ZFS datasets
+*** Enabling NFS sharing of ZFS datasets
 Install the NFS kernel modules
 #+BEGIN_SRC sh
 apt-get install -y nfs-kernel-server
 #+END_SRC
-Set up sharing to the desired hosts (note you need localhost to bind locally)
+Set up sharing to the desired hosts
 #+BEGIN_SRC sh
 zfs create zpool0/$dataset
 zfs set sharenfs="rw=@localhost,rw=@10.0.x.x/xx" zpool0/$dataset
 #+END_SRC
-*** Create a replicated GlusterFS volume
+*** Creating a replicated GlusterFS volume
 On each host, run
 #+BEGIN_SRC sh
 apt install glusterfs-server glusterfs-client
@@ -114,14 +114,15 @@ Pick one starting node and run
 #+BEGIN_SRC sh
 pvecm create $CLUSTER_NAME
 #+END_SRC
-** Join the Cluster
 On each other host, run
 #+BEGIN_SRC sh
 pvecm add $STARTING_NODE_IP
 #+END_SRC
 ** Add SSH keys to each host
 #+BEGIN_SRC sh
+for $HOST in $HOST1 $HOST2 ... $HOSTN; do
 ssh root@$HOST "tee -a ~/.ssh/authorized_keys" < $PUBLIC_KEY_FILE
+done
 #+END_SRC
 * Docker Swarm Setup
 ** Install docker-ce
