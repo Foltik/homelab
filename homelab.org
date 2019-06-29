@@ -40,9 +40,9 @@ One one host in the cluster, peer probe every other host. They should
 show up as peers afterwards. If the hostname doesn't resolve, try
 using the IP address.
 #+BEGIN_SRC sh
-gluster peer probe gfs2.lan.foltz.io
-gluster peer probe gfs3.lan.foltz.io
-gluster peer probe gfs4.lan.foltz.io
+gluster peer probe gfs2.lan.domain.com
+gluster peer probe gfs3.lan.domain.com
+gluster peer probe gfs4.lan.domain.com
 gluster peer status
 #+END_SRC sh
 On each host, create a ZFS dataset that will be part of the cluster
