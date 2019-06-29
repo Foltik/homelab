@@ -1,0 +1,371 @@
+* Proxmox Setup
+** Install Proxmox
+** Configure Apt
+*** Switch to the no-subscription repository
+On each host, run
+#+BEGIN_SRC sh
+rm /etc/apt/sources.list.d/pve-enterprise.list
+echo "deb http://download.proxmox.com/debian stretch pve-no-subscription" > /etc/apt/sources.list.d/pve-no-subscription.list
+apt update && apt dist-upgrade -y
+#+END_SRC
+Reboot if needed.
+*** Add basic dependencies for installing new repositories
+On each host, run
+#+BEGIN_SRC sh
+apt install -y apt-transport-https ca-certificates software-properties-common curl
+#+END_SRC
+** Configure Storage
+*** Create any ZFS pools
+Note that storage IDs are specific to proxmox and should be kept unique.
+#+BEGIN_SRC sh
+zpool create -o ashift=12 $POOL_NAME mirror $DEV_1 $DEV_2
+pvesm add zfspool $STORAGE_ID -pool $POOL_NAME
+#+END_SRC
+*** Enable NFS sharing of ZFS datasets
+Install the NFS kernel modules
+#+BEGIN_SRC sh
+apt-get install -y nfs-kernel-server
+#+END_SRC
+Set up sharing to the desired hosts (note you need localhost to bind locally)
+#+BEGIN_SRC sh
+zfs create zpool0/$dataset
+zfs set sharenfs="rw=@localhost,rw=@10.0.x.x/xx" zpool0/$dataset
+#+END_SRC
+*** Create a replicated GlusterFS volume
+On each host, run
+#+BEGIN_SRC sh
+apt install glusterfs-server glusterfs-client
+#+END_SRC
+One one host in the cluster, peer probe every other host. They should
+show up as peers afterwards. If the hostname doesn't resolve, try
+using the IP address.
+#+BEGIN_SRC sh
+gluster peer probe gfs2.lan.foltz.io
+gluster peer probe gfs3.lan.foltz.io
+gluster peer probe gfs4.lan.foltz.io
+gluster peer status
+#+END_SRC sh
+On each host, create a ZFS dataset that will be part of the cluster
+(they don't need to be the same size). Set quotas and reservations so
+GlusterFS is guaranteed a certain amount of space from the zpool.
+Mount them to a consistent directory on the server.
+#+BEGIN_SRC sh
+# on gfs0
+zfs create zpool0/gfs
+zfs set quota=256G reservation=256G mountpoint=/gfs zpool0/gfs
+# on gfs1
+zfs create zpool0/gfs
+zfs set quota=256G reservation=256G mountpoint=/gfs zpool0/gfs
+# ...
+#+END_SRC
+Create the volume on each host. Note that the brick must be a
+subdirectory of the mountpoint of the ZFS dataset.
+#+BEGIN_SRC sh
+gluster volume create share replica 2 transport tcp monolith:/gfs/share obelisk:/gfs/share
+gluster volume start share
+#+END_SRC
+Add entries to =/etc/fstab= to mount the volume on each server at boot time.
+#+BEGIN_EXAMPLE
+localhost:/share /media/share glusterfs defaults,_netdev 0 0
+#+END_EXAMPLE
+Mount manually to have access without rebooting.
+#+BEGIN_SRC sh
+mount -t glusterfs localhost:/share /media/share
+#+END_SRC
+** Configure Network
+*** Update servers to use DHCP
+On each host, change =/etc/network/interfaces= to the following, 
+replacing =eno1= with the primary network adapter.
+See [[https://github.com/docker/for-linux/issues/103][here]] the explanation of the iptables post-up commands.
+#+BEGIN_SRC 
+auto lo
+iface lo inet loopback
+
+iface eno1 inet manual
+
+
+auto vmbr0
+iface vmbr0 inet dhcp
+	bridge_ports eno1
+	bridge_stp off
+	bridge_fd 0
+  post-up iptables -F FORWARD && iptables -P FORWARD ACCEPT
+
+iface vmbr0 inet6 dhcp
+	bridge_ports eno1
+	bridge_stp off
+	bridge_fd 0
+  post-up iptables -F FORWARD && iptables -P FORWARD ACCEPT
+#+END_SRC
+*** Prepare to add static leases
+On each host, run
+#+BEGIN_SRC sh
+systemctl restart networking
+#+END_SRC
+to get an initial DHCP lease for each box. In =/var/lib/dhcp/dhclient6.$IFACE.leases=,
+remove every line following =default-duid "\000\001\...";=.
+*** Add static DHCP and DHCPv6 leases for each node in pfSense
+After the static leases are created, on each host run
+#+BEGIN_SRC sh
+systemctl restart networking
+#+END_SRC
+** Create the Cluster
+Pick one starting node and run
+#+BEGIN_SRC sh
+pvecm create $CLUSTER_NAME
+#+END_SRC
+** Join the Cluster
+On each other host, run
+#+BEGIN_SRC sh
+pvecm add $STARTING_NODE_IP
+#+END_SRC
+** Add SSH keys to each host
+#+BEGIN_SRC sh
+ssh root@$HOST "tee -a ~/.ssh/authorized_keys" < $PUBLIC_KEY_FILE
+#+END_SRC
+* Docker Swarm Setup
+** Install docker-ce
+On each host, run
+#+BEGIN_SRC sh
+curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
+echo "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+apt update && apt install docker-ce -y
+systemctl stop docker
+rm -rf /var/lib/docker/*
+#+END_SRC
+** Add ZFS subvolumes for docker files
+On each host,
+#+BEGIN_SRC sh
+zfs create -o mountpoint=/var/lib/docker $LOCAL_ZFS_POOL/docker
+#+END_SRC
+** Configure docker to use ZFS for storage
+On each host,
+#+BEGIN_SRC sh
+printf '{\n  "storage-driver": "zfs"\n}\n' > /etc/docker/daemon.json
+systemctl start docker
+#+END_SRC
+** Create the Swarm
+Pick a machine to be a swarm manager and run
+#+BEGIN_SRC sh
+docker swarm init --advertise-addr $MANAGER_IP
+#+END_SRC
+** Join the Swarm
+Copy the command to join the swarm from the output of =docker swarm init=
+and run on each worker node.
+#+BEGIN_EXAMPLE
+$ docker swarm init --advertise-addr 10.0.2.1
+Swarm initialized: current node (tkzl9glq8b6t8ow3n09aqy2t0) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join --token SWMTKN-1-98xqosx4dasdfgafl8xala0wz16kpawefj5xm5nb97r78uqiweur-ei98w1ah4cpg36rpl68ezxcmy 10.0.2.1:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+#+END_EXAMPLE
+* Traefik Setup
+Traefik serves as a global reverse proxy for every web-enabled service
+on the cluster. Through adding a simple label to a compose file, the
+reverse proxy can automatically configure a route. With wildcarded
+DNS, bringing up a web service can be as simple as =docker stack deploy=-ing
+a compose file.
+** Create an overlay network
+#+BEGIN_SRC sh
+docker network create proxy --driver overlay
+#+END_SRC
+** Create the configuration files
+#+BEGIN_SRC sh
+mkdir /var/lib/docker/traefik
+touch /var/lib/docker/traefik/traefik.toml
+touch /var/lib/docker/traefik/servers.toml
+touch /var/lib/docker/traefik/acme.json
+chmod 600 /var/lib/docker/traefik/acme.json
+#+END_SRC
+=traefik.toml=:
+#+BEGIN_SRC toml
+insecureskipverify = true
+defaultEntryPoints = ["http", "https"]
+
+
+[global]
+  checkNewVersion = true
+  sendAnonymousUsage = false
+
+
+[entryPoints]
+  [entryPoints.http]
+  address = ":80"
+    [entryPoints.http.redirect]
+    entryPoint = "https"
+  [entryPoints.https]
+  address = ":443"
+    [entryPoints.https.tls]
+
+
+[log]
+level = "WARN"
+
+
+[api]
+
+
+[ping]
+
+
+[docker]
+domain = "$DOMAIN"
+watch = true
+swarmMode = true
+network = "proxy"
+
+
+[acme]
+acmeLogging = true
+email = "$EMAIL"
+storage = "acme.json"
+onHostRule = true
+entryPoint = "https"
+  [acme.dnsChallenge]
+    provider = "cloudflare"
+    delayBeforeCheck = 30
+
+[[acme.domains]]
+  main = "*.$DOMAIN_1"
+  sans = ["$DOMAIN_1"]
+
+[[acme.domains]]
+  main = "*.$DOMAIN_2"
+  sans = ["$DOMAIN_2"]
+
+
+[file]
+watch = true
+filename = "servers.toml"
+#+END_SRC
+=servers.toml=:
+#+BEGIN_SRC toml
+[frontends]
+  [frontends.proxmox]
+    backend = "proxmox"
+    [frontends.proxmox.routes.domain]
+      rule = "Host:proxmox.$DOMAIN"
+
+[backends]
+  [backends.proxmox]
+    [backends.proxmox.servers.monolith]
+    url = "https://$PROXMOX_STARTING_NODE:8006"
+#+END_SRC
+** Deploy
+Create a compose file for =traefik.yml=
+#+BEGIN_SRC yaml
+version: '3.7'
+
+services:
+  proxy:
+    image: traefik:latest
+    networks:
+      - proxy
+    ports:
+      - 80:80
+      - 443:443
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/traefik/traefik.toml:/traefik.toml
+      - /var/lib/docker/traefik/servers.toml:/servers.toml
+      - /var/lib/docker/traefik/acme.json:/acme.json
+    environment:
+      CF_API_EMAIL: $EMAIL
+      CF_API_KEY: $KEY
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  proxy:
+    external: true
+#+END_SRC
+And deploy it
+#+BEGIN_SRC sh
+docker stack deploy traefik --compose-file=traefik.yml
+#+END_SRC
+
+* Portainer Setup
+** Deploy
+Create =portainer.yml=
+#+BEGIN_SRC yaml
+version: '3.7'
+
+services:
+  agent:
+    image: portainer/agent
+    environment:
+      AGENT_CLUSTER_ADDR: tasks.agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.platform.os == linux]
+
+  frontend:
+    image: portainer/portainer
+    command: -H tcp://tasks.agent:9001 --tlsskipverify --no-analytics
+    volumes:
+      - portainer_data:/data
+    networks:
+      - agent_network
+      - proxy
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      labels:
+        traefik.port: 9000
+        traefik.frontend.rule: "Host:portainer.$DOMAIN"
+
+networks:
+  agent_network:
+    driver: overlay
+    attachable: true
+  proxy:
+    external: true
+
+volumes:
+  portainer_data:
+#+END_SRC
+* Teamspeak Setup
+** Make a backup of the original server
+In the server directory, save 
+** Deploy
+** Configure
+*** Apply the snapshot
+*** Copy the server files
+* Minecraft Setup
+** Deploy
+Create a compose file for =minecraft.yml=
+#+BEGIN_SRC yaml
+version: '3.7'
+
+services:
+  server:
+    image: itzg/minecraft-server
+    ports:
+      - 25565:25565
+    volumes:
+      - server:/data
+    environment:
+      EULA: 'TRUE'
+      ENABLE_RCON: 'true'
+      RCON_PASSWORD: $PASSWORD
+      VERSION: 1.14.1
+
+volumes:
+  server:
+#+END_SRC
