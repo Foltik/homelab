@@ -121,7 +121,7 @@ pvecm add $STARTING_NODE_IP
 ** Add SSH keys to each host
 #+BEGIN_SRC sh
 for $HOST in $HOST1 $HOST2 ... $HOSTN; do
-ssh root@$HOST "tee -a ~/.ssh/authorized_keys" < $PUBLIC_KEY_FILE
+    ssh root@$HOST "tee -a ~/.ssh/authorized_keys" < $PUBLIC_KEY_FILE
 done
 #+END_SRC
 * Docker Swarm Setup
