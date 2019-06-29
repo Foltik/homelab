@@ -1,0 +1,21 @@
+version: '3.7'
+
+services:
+  grocy:
+    image: linuxserver/grocy
+    volumes:
+      - /media/share/grocy:/config
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    networks:
+      - proxy
+    deploy:
+      labels:
+        traefik.port: 80
+        traefik.frontend.rule: "Host:grocy.domain.com"
+
+networks:
+  proxy:
+    external: true

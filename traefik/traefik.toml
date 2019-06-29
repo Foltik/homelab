@@ -1,0 +1,50 @@
+insecureskipverify = true
+defaultEntryPoints = ["http", "https"]
+
+[global]
+  checkNewVersion = true
+  sendAnonymousUsage = false
+
+[entryPoints]
+  [entryPoints.http]
+  address = ":80"
+    [entryPoints.http.redirect]
+    entryPoint = "https"
+  [entryPoints.https]
+  address = ":443"
+    [entryPoints.https.tls]
+
+[log]
+level = "WARN"
+
+[api]
+
+[ping]
+
+[docker]
+watch = true
+swarmMode = true
+network = "proxy"
+domain = "domain.com"
+
+[acme]
+acmeLogging = true
+email = "email@example.com"
+storage = "acme.json"
+onHostRule = true
+entryPoint = "https"
+  [acme.dnsChallenge]
+    provider = "cloudflare"
+    delayBeforeCheck = 30
+
+[[acme.domains]]
+  main = "*.domain.com"
+  sans = ["domain.com"]
+
+[[acme.domains]]
+  main = "*.otherdomain.com"
+  sans = ["otherdomain.com"]
+
+[file]
+watch = true
+filename = "servers.toml"

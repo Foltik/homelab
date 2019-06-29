@@ -175,197 +175,24 @@ docker network create proxy --driver overlay
 ** Create the configuration files
 #+BEGIN_SRC sh
 mkdir /var/lib/docker/traefik
-touch /var/lib/docker/traefik/traefik.toml
-touch /var/lib/docker/traefik/servers.toml
 touch /var/lib/docker/traefik/acme.json
 chmod 600 /var/lib/docker/traefik/acme.json
 #+END_SRC
-=traefik.toml=:
-#+BEGIN_SRC toml
-insecureskipverify = true
-defaultEntryPoints = ["http", "https"]
-
-
-[global]
-  checkNewVersion = true
-  sendAnonymousUsage = false
-
-
-[entryPoints]
-  [entryPoints.http]
-  address = ":80"
-    [entryPoints.http.redirect]
-    entryPoint = "https"
-  [entryPoints.https]
-  address = ":443"
-    [entryPoints.https.tls]
-
-
-[log]
-level = "WARN"
-
-
-[api]
-
-
-[ping]
-
-
-[docker]
-domain = "$DOMAIN"
-watch = true
-swarmMode = true
-network = "proxy"
-
-
-[acme]
-acmeLogging = true
-email = "$EMAIL"
-storage = "acme.json"
-onHostRule = true
-entryPoint = "https"
-  [acme.dnsChallenge]
-    provider = "cloudflare"
-    delayBeforeCheck = 30
-
-[[acme.domains]]
-  main = "*.$DOMAIN_1"
-  sans = ["$DOMAIN_1"]
-
-[[acme.domains]]
-  main = "*.$DOMAIN_2"
-  sans = ["$DOMAIN_2"]
-
-
-[file]
-watch = true
-filename = "servers.toml"
-#+END_SRC
-=servers.toml=:
-#+BEGIN_SRC toml
-[frontends]
-  [frontends.proxmox]
-    backend = "proxmox"
-    [frontends.proxmox.routes.domain]
-      rule = "Host:proxmox.$DOMAIN"
-
-[backends]
-  [backends.proxmox]
-    [backends.proxmox.servers.monolith]
-    url = "https://$PROXMOX_STARTING_NODE:8006"
-#+END_SRC
+Copy [[file:traefik/traefik.toml][traefik.toml]] and [[file:traefik/servers.toml][servers.toml]] to =/var/lib/docker/traefik=,
+modifying as needed.
 ** Deploy
-Create a compose file for =traefik.yml=
-#+BEGIN_SRC yaml
-version: '3.7'
-
-services:
-  proxy:
-    image: traefik:latest
-    networks:
-      - proxy
-    ports:
-      - 80:80
-      - 443:443
-      - 8080:8080
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/traefik/traefik.toml:/traefik.toml
-      - /var/lib/docker/traefik/servers.toml:/servers.toml
-      - /var/lib/docker/traefik/acme.json:/acme.json
-    environment:
-      CF_API_EMAIL: $EMAIL
-      CF_API_KEY: $KEY
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-
-networks:
-  proxy:
-    external: true
-#+END_SRC
-And deploy it
+Deploy [[file:templates/traefik.yml][traefik.yml]] on the swarm manager,
 #+BEGIN_SRC sh
 docker stack deploy traefik --compose-file=traefik.yml
 #+END_SRC
-
-* Portainer Setup
-** Deploy
-Create =portainer.yml=
+* Docker Usage
+** Container Storage
+For the most part, docker compose files can be used as-is. For
+containers that need persistent storage, [[https://docs.docker.com/storage/bind-mounts/][bind mounts]] can be used to
+mount container directories on shared storage, as detailed earlier.
+Volumes can be added to a replicated directory by adding an entry
+under the volumes section of the compose file,
 #+BEGIN_SRC yaml
-version: '3.7'
-
-services:
-  agent:
-    image: portainer/agent
-    environment:
-      AGENT_CLUSTER_ADDR: tasks.agent
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/volumes:/var/lib/docker/volumes
-    networks:
-      - agent_network
-    deploy:
-      mode: global
-      placement:
-        constraints: [node.platform.os == linux]
-
-  frontend:
-    image: portainer/portainer
-    command: -H tcp://tasks.agent:9001 --tlsskipverify --no-analytics
-    volumes:
-      - portainer_data:/data
-    networks:
-      - agent_network
-      - proxy
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints: [node.role == manager]
-      labels:
-        traefik.port: 9000
-        traefik.frontend.rule: "Host:portainer.$DOMAIN"
-
-networks:
-  agent_network:
-    driver: overlay
-    attachable: true
-  proxy:
-    external: true
-
 volumes:
-  portainer_data:
-#+END_SRC
-* Teamspeak Setup
-** Make a backup of the original server
-In the server directory, save 
-** Deploy
-** Configure
-*** Apply the snapshot
-*** Copy the server files
-* Minecraft Setup
-** Deploy
-Create a compose file for =minecraft.yml=
-#+BEGIN_SRC yaml
-version: '3.7'
-
-services:
-  server:
-    image: itzg/minecraft-server
-    ports:
-      - 25565:25565
-    volumes:
-      - server:/data
-    environment:
-      EULA: 'TRUE'
-      ENABLE_RCON: 'true'
-      RCON_PASSWORD: $PASSWORD
-      VERSION: 1.14.1
-
-volumes:
-  server:
+  - /media/shared:/data
 #+END_SRC

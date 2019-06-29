@@ -1,0 +1,12 @@
+version: '3.7'
+services:
+  teamspeak:
+    image: teamspeak
+    volumes:
+      - /media/share/teamspeak:/var/ts3server
+    ports:
+      - 9987:9987/udp
+      - 10011:10011
+      - 30033:30033
+    environment:
+      TS3SERVER_LICENSE: accept

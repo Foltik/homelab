@@ -1,0 +1,27 @@
+version: '3.7'
+
+services:
+  proxy:
+    image: traefik:latest
+    networks:
+      - proxy
+    ports:
+      - 80:80
+      - 443:443
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/traefik/traefik.toml:/traefik.toml
+      - /var/lib/docker/traefik/servers.toml:/servers.toml
+      - /var/lib/docker/traefik/acme.json:/acme.json
+    environment:
+      CF_API_EMAIL: email@example.com
+      CF_API_KEY: xxxxxxxxxxxxxxxxxx
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  proxy:
+    external: true

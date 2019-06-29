@@ -1,0 +1,15 @@
+version: '3.7'
+
+services:
+  keeweb:
+    image: viossat/keeweb
+    networks:
+      - proxy
+    deploy:
+      labels:
+        traefik.port: 80
+        traefik.frontend.rule: "Host:pass.domain.com"
+
+networks:
+  proxy:
+    external: true

@@ -1,0 +1,10 @@
+[frontends]
+  [frontends.proxmox]
+    backend = "proxmox"
+    [frontends.proxmox.routes.domain]
+      rule = "Host:proxmox.domain.com"
+
+[backends]
+  [backends.proxmox]
+    [backends.proxmox.servers.monolith]
+    url = "https://10.0.2.1:8006"
